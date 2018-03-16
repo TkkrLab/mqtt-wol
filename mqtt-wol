@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+
+# MQTT SETTINGS
+server = "mrmeeseeks"
+port = 1883
+topic = "tkkrlab/powermanagement"
+
+# DAEMON SETTINGS
+cache_file = "/etc/mqtt-wol/hosts.json"
+cache_update = True
+
+#------------------------------------------------
+
+import sys
+import json
+from subprocess import call
+
+try:
+  import paho.mqtt.client as paho
+except:
+  print("The Paho MQTT module for Python has not been installed.")
+  print("Please install the Paho MQTT module by running the following command: ")
+  print("'yaourt -Syyu python-paho-mqtt'")
+  sys.exit(1)
+
+print("Wake-On-Lan MQTT daemon")
+print("Renze Nicolai 2017")
+print("")
+
+#-------------------------------------------------
+
+def hosts_load():
+  global cache
+  global cache_file
+  try:
+    cache = json.loads(open(cache_file).read())
+    print("[DB] Hosts loaded from file '"+cache_file+"'")
+  except:
+    print("[DB] Could not open hosts file.")
+    cache = json.loads("{}")
+
+def hosts_save():
+  global cache
+  global cache_file
+  try:
+    json.dump(cache, open(cache_file,'w'))
+    print("[DB] Hosts file updated")
+  except:
+    print("[DB] Could not update hosts file!")
+
+def hosts_getmac(hostname):
+  global cache
+  try:
+    mac = cache[hostname]
+    print("[DB] Hostname '"+hostname+"' has mac '"+mac+"'.")
+    return mac
+  except:
+    print("[DB] Hostname lookup for '"+hostname+"' failed.")
+    return False
+
+def on_connect(mosq, user_data, flags, rc):
+  global topic
+  if (rc==0):
+    print("[MQTT] Connected to MQTT server")
+    print("[DEBUG] Subscribing to topic "+topic+"/#")
+    mosq.subscribe(topic+"/#", 0)
+  else:
+    print("[MQTT] Error: on_connect returned rc="+str(rc))
+    sys.exit(1)
+
+def on_message(mosq, obj, msg):
+  global topic
+  #print("[MQTT] Received message")
+  #print("       Topic: "+msg.topic)
+  #print("       Qos: "+str(msg.qos))
+  #print("       Payload: "+str(msg.payload))
+  #print("       intval: "+str(int(msg.payload)))
+  if (msg.topic.startswith(topic)): #This is a message intended for powermanagement
+    hostname = msg.topic.replace(topic+"/", "")
+    if(int(msg.payload)==1):
+      print("[WOL] WOL requested for '"+hostname+"'")
+      mac = hosts_getmac(hostname)
+      if (mac==False):
+        print("[WOL] Hostname unknown, failure.")
+      else:
+        print("[WOL] Hostname found! Sending WOL packet...")
+        call(["wol", mac])
+    else:
+      print("[WOL] Host '"+hostname+"' is shutting down.")
+  else:
+    print("[MQTT] Received message on unknown topic")
+    print("       Topic: "+msg.topic)
+    print("       Qos: "+str(msg.qos))
+    print("       Payload: "+str(msg.payload)) 
+
+def on_subscribe(mosq, obj, mid, granted_qos):
+    print("[MQTT] Subscribed.")
+
+def on_log(mosq, obj, level, string):
+    print("[MQTT] "+string)
+
+def main():
+  global server
+  global port
+  mqttc = paho.Client()
+  mqttc.on_message = on_message
+  mqttc.on_connect = on_connect
+  mqttc.on_subscribe = on_subscribe
+  print("[DEBUG] Connecting to MQTT server ("+server+":"+str(port)+")...")
+  mqttc.connect(server, port, 60)
+  hosts_load()
+  mqttc.loop_forever()
+
+if __name__ == "__main__":
+  main()
